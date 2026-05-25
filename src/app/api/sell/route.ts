@@ -3,8 +3,6 @@ import { Resend } from 'resend';
 
 export const runtime = 'nodejs';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const MAX_TOTAL_SIZE = 20 * 1024 * 1024;
 
@@ -23,7 +21,9 @@ function getStringValue(formData: FormData, key: string) {
 function isAllowedFile(file: File) {
   const fileName = file.name.toLowerCase();
 
-  return ALLOWED_FILE_EXTENSIONS.some((extension) => fileName.endsWith(extension));
+  return ALLOWED_FILE_EXTENSIONS.some((extension) => (
+    fileName.endsWith(extension)
+  ));
 }
 
 function escapeHtml(value: string) {
@@ -39,29 +39,51 @@ function formatFileSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(2)} MB`;
 }
 
+function buildFileListHtml(files: File[]) {
+  return files
+    .map((file) => {
+      const fileName = escapeHtml(file.name);
+      const fileSize = formatFileSize(file.size);
+
+      return `<li>${fileName} — ${fileSize}</li>`;
+    })
+    .join('');
+}
+
+function buildFileListText(files: File[]) {
+  return files
+    .map((file) => `- ${file.name} (${formatFileSize(file.size)})`)
+    .join('\n');
+}
+
 export async function POST(request: Request) {
   try {
-    if (!process.env.RESEND_API_KEY) {
+    const resendApiKey = process.env.RESEND_API_KEY;
+    const sellToEmail = process.env.SELL_TO_EMAIL;
+    const resendFromEmail = process.env.RESEND_FROM_EMAIL;
+
+    if (!resendApiKey) {
       return NextResponse.json(
         { message: 'RESEND_API_KEY is missing.' },
         { status: 500 },
       );
     }
 
-    if (!process.env.SELL_TO_EMAIL) {
+    if (!sellToEmail) {
       return NextResponse.json(
         { message: 'SELL_TO_EMAIL is missing.' },
         { status: 500 },
       );
     }
 
-    if (!process.env.RESEND_FROM_EMAIL) {
+    if (!resendFromEmail) {
       return NextResponse.json(
         { message: 'RESEND_FROM_EMAIL is missing.' },
         { status: 500 },
       );
     }
 
+    const resend = new Resend(resendApiKey);
     const formData = await request.formData();
 
     const name = getStringValue(formData, 'name');
@@ -71,7 +93,9 @@ export async function POST(request: Request) {
 
     const files = formData
       .getAll('photos')
-      .filter((value): value is File => value instanceof File && value.size > 0);
+      .filter((value): value is File => (
+        value instanceof File && value.size > 0
+      ));
 
     if (!name) {
       return NextResponse.json(
@@ -102,8 +126,7 @@ export async function POST(request: Request) {
       if (!isAllowedFile(file)) {
         return NextResponse.json(
           {
-            message:
-              'Only JPG, JPEG, PNG, and PDF files are allowed.',
+            message: 'Only JPG, JPEG, PNG, and PDF files are allowed.',
           },
           { status: 400 },
         );
@@ -171,11 +194,7 @@ export async function POST(request: Request) {
 
       <h3>Attached Files</h3>
       <ul>
-        ${files
-    .map(
-      (file) => `<li>${escapeHtml(file.name)} — ${formatFileSize(file.size)}</li>`,
-    )
-    .join('')}
+        ${buildFileListHtml(files)}
       </ul>
     `;
 
@@ -191,14 +210,12 @@ Note:
 ${note || 'No note provided.'}
 
 Attached Files:
-${files
-    .map((file) => `- ${file.name} (${formatFileSize(file.size)})`)
-    .join('\n')}
+${buildFileListText(files)}
     `.trim();
 
     const { error } = await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL,
-      to: [process.env.SELL_TO_EMAIL],
+      from: resendFromEmail,
+      to: [sellToEmail],
       subject: `New antique submission from ${name}`,
       html,
       text,
